@@ -70,6 +70,17 @@ if pr[2] == "N/A":                                 # mkv 는 스트림 길이를
     pr[2] = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", SRC],
                            capture_output=True, text=True).stdout.strip()
 SW, SH, DUR = int(pr[0]), int(pr[1]), float(pr[2])
+# 여러 캐릭터가 나란히 춤추는 원본에서 한 명만 따라갈 때: edit.json camera.region = [x0, x1] (원본 가로 비율). 그 띠만 잘라 윤곽을 잡는다 -
+# 띠 밖은 몸이 아니다. 가시나0 (2026-10-02): 하늘머리 (왼쪽) 와 검은머리 (오른쪽) 가 둘 다 몸으로 잡혀 상자가 둘을 감쌌다
+REG = (E.get("camera") or {}).get("region") or [0, 1]
+
+
+def seg_region(f, infer, cv2):
+    """원본 프레임 한 장 -> region 띠 안에서만 잡은 윤곽 (f 크기)"""
+    a, b = int(REG[0] * f.shape[1]), int(REG[1] * f.shape[1])
+    out = np.zeros(f.shape[:2], bool)
+    out[:, a:b] = seg_frame(f[:, a:b].copy(), infer, cv2)
+    return out
 
 
 def keep_ranges():
@@ -153,7 +164,7 @@ def check_masks(have, want, infer, W, H):
                 continue
             h = prev[3] - prev[1]
             cx = (prev[0] + prev[2]) / 2
-            a, b = int(max(0, cx - 0.75 * h) * W / MW), int(min(MW, cx + 0.75 * h) * W / MW)
+            a, b = int(max(REG[0] * MW, cx - 0.75 * h) * W / MW), int(min(REG[1] * MW, cx + 0.75 * h) * W / MW)
             fr = subprocess.run(["ffmpeg", "-v", "error", "-ss", "%.3f" % t, "-i", SRC, "-frames:v", "1", "-vf", "scale=%d:%d" % (W, H),
                                  "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
             full = np.zeros((H, W), bool)
@@ -192,7 +203,7 @@ def isnet_runner():
 def masks_isnet():
     """FPS 마다 몸 윤곽 (MW x MH bool). 편 폴더 char_masks.npz 에 캐시"""
     st = os.stat(SRC)
-    key = json.dumps({"src": SRC.replace(os.sep, "/"), "size": st.st_size, "mtime": int(st.st_mtime), "fps": FPS, "w": MW, "v": 7})
+    key = json.dumps({"src": SRC.replace(os.sep, "/"), "size": st.st_size, "mtime": int(st.st_mtime), "fps": FPS, "w": MW, "v": 7, **({"region": REG} if REG != [0, 1] else {})})
     cache = os.path.join(work, "char_masks.npz")
     have = {}
     if os.path.exists(cache):
@@ -214,7 +225,7 @@ def masks_isnet():
                 g.append(t)
         groups.append(g)
         done = 0
-        seg = lambda f: cv2.resize(seg_frame(f, infer, cv2).astype(np.uint8), (MW, MH), interpolation=cv2.INTER_NEAREST).astype(bool)
+        seg = lambda f: cv2.resize(seg_region(f, infer, cv2).astype(np.uint8), (MW, MH), interpolation=cv2.INTER_NEAREST).astype(bool)
         for g in groups:
             p = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", "%.3f" % g[0], "-i", SRC, "-t", "%.3f" % (g[-1] - g[0] + 0.5 / FPS),
                                   # round=up: fps 필터는 칸 안의 마지막 프레임을 내놓는다 - 기본 (near) 으로는 t 라고 적은 윤곽이
