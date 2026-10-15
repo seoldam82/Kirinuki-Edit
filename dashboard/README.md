@@ -1,7 +1,7 @@
 # Dashboard - developer notes
 
 A static web app plus a small Python server (`server.py`) for managing edits. No build step, no npm.
-**It never calls the Claude API.** It writes job files and prompts. Claude Code runs them.
+**It never calls a model API.** It uploads source media, writes job files and prompts, and shows a request the user can paste into a Codex chat with access to the same checkout. See [Codex editing](../docs/codex-editing.md).
 
 The user guide (Korean, every screen and shortcut) is [docs/대시보드_가이드.md](../docs/대시보드_가이드.md).
 This file covers the code: files, server API, data model and the rules that keep the browser and the
@@ -90,7 +90,7 @@ POST
 | `/api/project/delete` | move to `projects/_trash` |
 | `/api/style/save` · `/api/style/delete` | style files |
 | `/api/media/upload?project=&name=` | file dropped from Explorer -> `projects/<id>/media/` (same name and size = reuse) |
-| `/api/job` | write `jobs/<time>_<kind>.json` and `.md` for Claude Code |
+| `/api/job` | write `jobs/<time>_<kind>_<unique>.json` and `.md`, return a Codex handoff request; requires a saved project |
 | `/api/render` | start a render |
 
 ## Projects
@@ -105,7 +105,7 @@ projects/_trash/             deleted projects
 
 Ctrl+S saves. Any change marks the project dirty and autosaves after 20 s of quiet.
 On page load `app.js` (`freshenFromDisk`) compares the folder's `savedAt` with the browser's copy. If the
-folder is newer (Claude exported a new edit), the project is read from disk. If they are equal, `diskAt` is still set. Skipping that
+folder is newer (Codex exported a new edit), the project is read from disk. If they are equal, `diskAt` is still set. Skipping that
 made every later save think the folder was newer, so autosave silently stopped after a page reload.
 
 **`save_project` merges `review` key by key.** Pipeline output (`kept`, `transcript`, `captions`,
@@ -167,9 +167,10 @@ Episodes that predate shortsmith still go through the legacy steps (`import_proj
 
 ## AI jobs
 
-The AI edit tab writes `jobs/<time>_스타일적용.json` and `.md` (or `_재편집`). The job carries the
+The AI edit tab writes uniquely named JSON and Markdown files in `jobs/`. The job carries the
 instruction text, notes (with source time and position), subtitle languages, aspect, assets and the AI
 policy. Notes drawn before the first edit are on the dropped source file, so their time is source time.
+The handoff includes `agent: codex`, a saved `project` ID, `projectFile`, and `mediaPaths` mappings from browser-relative names to uploaded absolute paths. The UI saves the project before submission and uploads the task's input/asset groups sequentially. Saved metadata is not an automatic agent invocation; the user must send the displayed request to Codex. Browser-only mode embeds job JSON in the request and asks the user to attach media separately.
 
 ## Fonts
 
